@@ -1,0 +1,117 @@
+version: '3.8'
+
+# ============================================
+# DOCKER COMPOSE PARA TESTES LOCAIS
+# ============================================
+# Este arquivo é otimizado para desenvolvimento e testes locais
+# 
+# USO:
+#   docker-compose -f docker-compose.test.yml up -d
+#   docker-compose -f docker-compose.test.yml down -v
+
+services:
+  # ============================================
+  # POSTGRESQL (Banco de Dados)
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-health-postgres-test
+    ports:
+      - "5438:5432"
+    environment:
+      - POSTGRES_DB=ai_health_agent
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-postgres}
+      # Configurações de performance para testes
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      # Script de inicialização (opcional)
+      - ./scripts/init-test-data.sql:/docker-entrypoint-initdb.d/init-test-data.sql
+    networks:
+      - ai-health-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # EVOLUTION API (WhatsApp Gateway)
+  # ============================================
+  evolution-api:
+    image: atendai/evolution-api:latest
+    container_name: evolution-api-test
+    ports:
+      - "8081:8080"
+    environment:
+      # Autenticação
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-test-api-key-123}
+      
+      # Database (desabilitado para testes)
+      - DATABASE_ENABLED=false
+      
+      # Webhook
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_GLOBAL_URL=${WEBHOOK_URL:-http://host.docker.internal:8080/webhook/whatsapp}
+      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
+      
+      # QR Code
+      - QRCODE_LIMIT=30
+      
+      # Logs
+      - LOG_LEVEL=INFO
+      - LOG_COLOR=true
+      
+    volumes:
+      - evolution_test_instances:/evolution/instances
+      - evolution_test_store:/evolution/store
+    
+    networks:
+      - ai-health-test-network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    restart: unless-stopped
+
+  # ============================================
+  # PGADMIN (Opcional - Interface Web para PostgreSQL)
+  # ============================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ai-health-pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@aihealth.com
+      - PGADMIN_DEFAULT_PASSWORD=admin123
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    volumes:
+      - pgadmin_test_data:/var/lib/pgadmin
+    networks:
+      - ai-health-test-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    profiles:
+      - tools  # Só sobe se usar: docker-compose --profile tools up
+
+volumes:
+  postgres_test_data:
+    driver: local
+  evolution_test_instances:
+    driver: local
+  evolution_test_store:
+    driver: local
+  pgadmin_test_data:
+    driver: local
+
+networks:
+  ai-health-test-network:
+    driver: bridge
+
